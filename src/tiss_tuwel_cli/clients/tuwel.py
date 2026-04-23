@@ -40,6 +40,17 @@ class TuwelClient:
     """
 
     BASE_URL = "https://tuwel.tuwien.ac.at/webservice/rest/server.php"
+    AUTH_ERROR_CODES = {"invalidtoken", "invalidsession", "accessexception", "unauthorized", "notloggedin"}
+    AUTH_ERROR_PATTERNS = (
+        "invalid token",
+        "token is invalid",
+        "session expired",
+        "session has expired",
+        "access control exception",
+        "not logged in",
+        "authentication",
+        "unauthorized",
+    )
 
     def __init__(self, token: str, timeout: int = 15, token_refresh_callback: Optional[Callable[[], str]] = None):
         """
@@ -103,20 +114,23 @@ class TuwelClient:
             if isinstance(data, dict) and "exception" in data:
                 error_msg = data.get('message', '')
                 error_code = data.get('errorcode', '')
+                error_msg_l = str(error_msg).lower()
+                error_code_l = str(error_code).lower()
+
+                is_auth_error = (
+                    error_code_l in self.AUTH_ERROR_CODES
+                    or any(pattern in error_msg_l for pattern in self.AUTH_ERROR_PATTERNS)
+                )
 
                 # Refresh on token-invalid/expired errors.
                 # accessexception fires when the token has expired (60s lifetime on TUWEL).
                 # invalidtoken fires when the token record no longer exists.
                 # If it was a real permission error (not expiry), the retry will raise the same error.
-                if _retry and self.token_refresh_callback and (
-                        error_code == "invalidtoken" or
-                        error_code == "invalidsession" or
-                        error_code == "accessexception"
-                ):
+                if _retry and self.token_refresh_callback and is_auth_error:
                     # Attempt to refresh token
                     try:
                         new_token = self.token_refresh_callback()
-                        if new_token and new_token != self.token:
+                        if new_token:
                             self.token = new_token
                             # Recursively retry once
                             return self._call(wsfunction, params, _retry=False)

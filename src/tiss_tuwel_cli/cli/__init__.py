@@ -53,12 +53,13 @@ def main(
         raise typer.Exit()
 
 
-def get_tuwel_client(force_new_token: bool = False) -> TuwelClient:
+def get_tuwel_client(force_new_token: bool = False, silent: bool = False) -> TuwelClient:
     """
     Get an authenticated TUWEL client, automatically handling token validation and refresh.
 
     Args:
         force_new_token: If True, will force a new token to be fetched even if a valid one exists.
+        silent: If True, suppress user-facing status/error messages.
 
     Returns:
         An authenticated TuwelClient instance.
@@ -66,40 +67,51 @@ def get_tuwel_client(force_new_token: bool = False) -> TuwelClient:
     Raises:
         typer.Exit: If no token can be obtained.
     """
+    def _auto_login(*, silent: bool = True) -> bool:
+        """Try to refresh login in the background using saved credentials."""
+        if not config.get_setting("auto_login", True):
+            return False
+
+        user, passw = config.get_login_credentials()
+        if not user or not passw:
+            return False
+
+        if not silent:
+            rprint("[yellow]No valid token found. Attempting automatic re-login...[/yellow]")
+
+        from tiss_tuwel_cli.cli.auth import _run_playwright_login_internal
+        return _run_playwright_login_internal(user, passw, False)
+
     token = config.get_tuwel_token()
 
-    # 1. If no token, try to log in
+    # 1. If no token (or forced), try background login first.
     if not token or force_new_token:
-        user, _ = config.get_login_credentials()
-        if user:
-            rprint("[yellow]No valid token found. Attempting automatic re-login...[/yellow]")
-            from tiss_tuwel_cli.cli.auth import _run_playwright_login_internal
-            success = _run_playwright_login_internal(user, _, False)  # silent=True -> debug=False
-            if success:
-                token = config.get_tuwel_token()
+        success = _auto_login(silent=silent)
+        if success:
+            token = config.get_tuwel_token()
+
+        if not token:
+            if config.get_setting("auto_login", True) and not config.has_credentials():
+                if not silent:
+                    rprint("[bold red]Error:[/bold red] TUWEL credentials are not saved, so auto-login cannot run.")
+                    rprint("Run [green]tiss-tuwel-cli login[/green] once to store credentials, then future logins happen automatically.")
+            elif not config.get_setting("auto_login", True):
+                if not silent:
+                    rprint("[bold red]Error:[/bold red] Auto-login is disabled and no valid token is available.")
+                    rprint("Enable auto-login in settings or run [green]tiss-tuwel-cli login[/green].")
             else:
-                rprint("[bold red]Error:[/bold red] Automatic login failed. Please run [green]tiss-tuwel-cli login[/green] manually.")
-                raise typer.Exit()
-        else:
-            rprint("[bold red]Error:[/bold red] TUWEL token not found. Please run [green]tiss-tuwel-cli login[/green] first.")
-            raise typer.Exit()
+                if not silent:
+                    rprint("[bold red]Error:[/bold red] Automatic login failed.")
+            raise typer.Exit(code=1)
 
     def refresh_callback() -> str:
-        """Callback to refresh the token if invalid."""
-        # Only attempt if auto-login is enabled (default is True)
-        if not config.get_setting("auto_login", True):
-            # If auto-login is disabled, we can't do anything automatically
-            raise Exception("Auto-login is disabled.")
-
-        user, _ = config.get_login_credentials()
-        if user:
-            from tiss_tuwel_cli.cli.auth import _run_playwright_login_internal
-            success = _run_playwright_login_internal(user, _, False)
-            if success:
-                new_token = config.get_tuwel_token()
-                if new_token:
-                    return new_token
-        raise Exception("Auto-login failed.")
+        """Refresh the token when the API reports an auth/session error."""
+        if not _auto_login(silent=True):
+            raise Exception("Auto-login failed.")
+        new_token = config.get_tuwel_token()
+        if not new_token:
+            raise Exception("Auto-login did not produce a token.")
+        return new_token
 
     # Return the client directly — the token_refresh_callback handles invalid tokens
     # on-demand when an actual API call fails. Eagerly validating here with get_site_info()

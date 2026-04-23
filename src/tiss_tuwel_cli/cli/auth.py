@@ -255,6 +255,14 @@ def manual_login():
 
     user_input = Prompt.ask("Paste URL or Token")
 
+    # Common mistake: users paste an intermediate TU Wien SSO URL instead of the
+    # final moodlemobile://token=... redirect URL.
+    if "idp.zid.tuwien.ac.at" in user_input or "AuthState=" in user_input:
+        rprint("[bold red]That is an intermediate SSO URL, not the TUWEL token redirect.[/bold red]")
+        rprint("[yellow]After login, copy the URL that starts with[/yellow] [cyan]moodlemobile://token=[/cyan]")
+        rprint("[yellow]or copy only the token value itself.[/yellow]")
+        return
+
     token = parse_mobile_token(user_input)
 
     # If parsing failed, maybe they pasted the raw token directly?
@@ -302,13 +310,23 @@ def hybrid_login():
             )
             page = context.new_page()
 
-            # Listener for the token URL
+            # Listener for 302 redirect Location header (most reliable in browser automation)
+            def on_response(response):
+                nonlocal token_url
+                if "launch.php" in response.url and response.status == 302:
+                    location = response.headers.get("location", "")
+                    if "moodlemobile://token=" in location:
+                        token_url = location
+                        rprint("[bold green]✓ Token captured![/bold green]")
+
+            # Fallback listener for engines that emit the custom URI as a request URL
             def on_request(request):
                 nonlocal token_url
                 if "moodlemobile://token=" in request.url:
                     token_url = request.url
-                    rprint(f"[bold green]✓ Token captured![/bold green]")
+                    rprint("[bold green]✓ Token captured![/bold green]")
 
+            page.on("response", on_response)
             page.on("request", on_request)
 
             # Navigate to the mobile token page which will trigger login

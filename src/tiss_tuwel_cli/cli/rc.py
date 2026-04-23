@@ -37,29 +37,13 @@ def get_summary_line(client=None) -> str:
     if not widgets:
         return ""
 
-    # Check if we have a token
-    token = config.get_tuwel_token()
-    if not token:
-        return "[dim]Not logged in. Run:[/dim] tiss-tuwel-cli login"
-
-    # Get or create client (with refresh callback to handle token expiry)
+    # Get or create client using the shared auth flow.
     if client is None:
-        from tiss_tuwel_cli.clients.tuwel import TuwelClient
-        from tiss_tuwel_cli.config import ConfigManager as _CM
-        _cfg = _CM()
-
-        def _refresh():
-            user, passw = _cfg.get_login_credentials()
-            if not user:
-                raise Exception("No credentials stored.")
-            from tiss_tuwel_cli.cli.auth import _run_playwright_login_internal
-            if _run_playwright_login_internal(user, passw, False):
-                new = _cfg.get_tuwel_token()
-                if new:
-                    return new
-            raise Exception("Token refresh failed.")
-
-        client = TuwelClient(token, token_refresh_callback=_refresh)
+        from tiss_tuwel_cli.cli import get_tuwel_client
+        try:
+            client = get_tuwel_client(silent=True)
+        except Exception:
+            return "[dim]Not logged in. Run:[/dim] tiss-tuwel-cli login"
 
     parts = []
 
