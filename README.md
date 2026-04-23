@@ -13,20 +13,19 @@ A Python CLI tool that merges TISS and TUWEL into a single terminal interface.
 
 ## Installation
 
-Requires Python 3.8+.
+Requires Python 3.9+.
 
 ```bash
 git clone https://github.com/spheppner/tiss-tuwel-cli.git
 cd tiss-tuwel-cli
+uv sync
+uv run playwright install
+```
 
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/Mac:
-source .venv/bin/activate
+Run commands with `uv run`:
 
-pip install -e "."
-playwright install
+```bash
+uv run tiss-tuwel-cli --help
 ```
 
 ## Authentication
@@ -37,21 +36,21 @@ Three login modes available:
 Headless browser automation. Credentials can be saved for future logins.
 
 ```bash
-tiss-tuwel-cli login
+uv run tiss-tuwel-cli login
 ```
 
 ### Hybrid 🌐
 Opens visible browser for manual login. Token captured automatically.
 
 ```bash
-tiss-tuwel-cli login --hybrid
+uv run tiss-tuwel-cli login --hybrid
 ```
 
 ### Manual 🕵️
 Generate the `moodlemobile://` token URL yourself and paste it.
 
 ```bash
-tiss-tuwel-cli login --manual
+uv run tiss-tuwel-cli login --manual
 ```
 
 ## Usage
@@ -77,7 +76,7 @@ tiss-tuwel-cli login --manual
 Add to your `.bashrc` or `.zshrc`:
 
 ```bash
-tiss-tuwel-cli rc
+uv run tiss-tuwel-cli rc
 ```
 
 Output example: `📅 2 deadlines | ⚠️ 1 urgent | 🎓 1 exam reg`
@@ -87,7 +86,7 @@ Configure displayed widgets via `tiss-tuwel-cli settings`.
 ### Interactive Mode
 
 ```bash
-tiss-tuwel-cli -i
+uv run tiss-tuwel-cli -i
 ```
 
 Menu-driven interface organized into:
@@ -98,7 +97,7 @@ Menu-driven interface organized into:
 
 ## Settings
 
-Access via `tiss-tuwel-cli settings` or interactive menu:
+Access via `uv run tiss-tuwel-cli settings` or interactive menu:
 
 - **Auto-login** - Silent re-authentication when token expires
 - **RC Widgets** - Choose what appears in the `rc` command output
