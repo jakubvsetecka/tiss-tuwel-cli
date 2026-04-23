@@ -87,103 +87,131 @@ def login(
         rprint("[bold red]Failed to capture token.[/bold red]")
 
 
+LAUNCH_URL = "https://tuwel.tuwien.ac.at/admin/tool/mobile/launch.php?service=moodle_mobile_app&passport=student_api"
+
+
+def _try_get_token(page, debug: bool) -> str:
+    """
+    Navigate to the mobile launch page and return the token URL if captured, else "".
+    The server returns a 302 to moodlemobile://token=... which we capture from the
+    Location header (reliable in headless mode; custom URI request events are not).
+    """
+    token_url = ""
+
+    def on_response(response):
+        nonlocal token_url
+        if "launch.php" in response.url and response.status == 302:
+            location = response.headers.get("location", "")
+            if "moodlemobile://token=" in location:
+                token_url = location
+                if debug:
+                    rprint(f"[bold green]>>> TOKEN URL CAPTURED from 302 redirect: {location}[/bold green]")
+
+    page.on("response", on_response)
+
+    try:
+        page.goto(LAUNCH_URL)
+    except PlaywrightTimeoutError:
+        if debug:
+            rprint("[magenta]Page.goto timed out (expected on moodlemobile:// redirect).[/magenta]")
+    except Exception as e:
+        if "net::ERR_ABORTED" not in str(e):
+            raise
+        if debug:
+            rprint(f"[magenta]Ignoring expected ERR_ABORTED: {e}[/magenta]")
+
+    # Poll briefly for the response handler to fire
+    end_time = time.time() + (10 if not debug else 30)
+    while time.time() < end_time:
+        if token_url:
+            break
+        page.wait_for_timeout(100)
+
+    page.remove_listener("response", on_response)
+    return token_url
+
+
 def _run_playwright_login_internal(user: str, passw: str, debug: bool) -> bool:
     """
     Internal helper to run Playwright login. Returns True on success, False on failure.
-    This function is designed to be called internally and should not handle UI feedback.
+
+    Fast path: if a saved browser session exists, go directly to launch.php — no SSO
+    needed (~1-2s). Falls back to full SSO flow if the session has expired.
     """
+    storage_state_path = config.config_dir / "browser_state.json"
+
     try:
         with sync_playwright() as p:
-            storage_state_path = config.config_dir / "browser_state.json"
-
             if debug:
                 rprint("[bold magenta]DEBUG MODE ENABLED[/bold magenta]")
 
             browser = p.chromium.launch(headless=not debug)
-            context = browser.new_context(storage_state=storage_state_path if storage_state_path.exists() else None)
-            page = context.new_page()
 
             if debug:
-                # Log all requests and responses
-                page.on("request", lambda request: rprint(f"[magenta]>> Request: {request.method} {request.url}[/magenta]"))
-                page.on("response", lambda response: rprint(f"[magenta]<< Response: {response.status} {response.url}[/magenta]"))
+                def _log_request(req):
+                    rprint(f"[magenta]>> Request: {req.method} {req.url}[/magenta]")
+                def _log_response(res):
+                    rprint(f"[magenta]<< Response: {res.status} {res.url}[/magenta]")
 
-            # 1. Go to login page
-            page.goto("https://tuwel.tuwien.ac.at/login/index.php")
-            if debug:
-                rprint(f"[magenta]On page: {page.title()} ({page.url})[/magenta]")
-
-            # If already logged in, we might be on the dashboard or a confirmation page
-            is_logged_in = "dashboard" in page.url or "bereits als" in page.content()
-            if is_logged_in:
+            # --- Fast path: reuse saved browser session ---
+            token_url = ""
+            if storage_state_path.exists():
                 if debug:
-                    rprint("[magenta]Dashboard URL or existing session detected, assuming already logged in.[/magenta]")
-            else:
+                    rprint("[magenta]Trying fast path with saved browser session...[/magenta]")
+                context = browser.new_context(storage_state=str(storage_state_path))
+                page = context.new_page()
+                if debug:
+                    page.on("request", _log_request)
+                    page.on("response", _log_response)
+                token_url = _try_get_token(page, debug)
+                if debug:
+                    rprint(f"[magenta]Fast path result: {'success' if token_url else 'session expired, falling back'}[/magenta]")
+                if not token_url:
+                    context.close()
+
+            # --- Slow path: full SSO login ---
+            if not token_url:
+                context = browser.new_context()
+                page = context.new_page()
+                if debug:
+                    page.on("request", _log_request)
+                    page.on("response", _log_response)
+
+                # 1. Go to login page and authenticate via TU Wien SSO
+                page.goto("https://tuwel.tuwien.ac.at/login/index.php")
+                if debug:
+                    rprint(f"[magenta]On page: {page.title()} ({page.url})[/magenta]")
+
                 # 2. Click TU Wien Login button
                 page.wait_for_selector('a:has-text("TU Wien Login")').click()
                 if debug:
-                    page.wait_for_load_state('networkidle')
+                    page.wait_for_selector('input[name="username"]')
                     rprint(f"[magenta]On page: {page.title()} ({page.url})[/magenta]")
 
                 # 3. Fill and submit credentials
                 page.fill('input[name="username"]', user)
                 page.fill('input[name="password"]', passw)
                 page.click('button:has-text("Log in")')
+                page.wait_for_url('**/tuwel.tuwien.ac.at/**', timeout=30000)
                 if debug:
-                    page.wait_for_load_state('networkidle')
                     rprint(f"[magenta]On page: {page.title()} ({page.url})[/magenta]")
 
-            # 4. Wait for the token page and capture the URL
-            token_url = ""
+                token_url = _try_get_token(page, debug)
 
-            def on_request(request):
-                nonlocal token_url
-                if "moodlemobile://token=" in request.url:
-                    token_url = request.url
-                    if debug:
-                        rprint(f"[bold green]>>> TOKEN URL CAPTURED: {request.url}[/bold green]")
-
-            page.on("request", on_request)
-
+            # Save session for fast path next time
             try:
-                page.goto("https://tuwel.tuwien.ac.at/admin/tool/mobile/launch.php?service=moodle_mobile_app&passport=student_api")
-            except PlaywrightTimeoutError:
-                # This is expected if the page redirects to the custom protocol
+                context.storage_state(path=str(storage_state_path))
                 if debug:
-                    rprint("[magenta]Page.goto timed out as expected due to moodlemobile:// redirect.[/magenta]")
+                    rprint(f"[magenta]Browser session saved to {storage_state_path}[/magenta]")
+            except Exception:
                 pass
-            except Exception as e:
-                # Also ignore the ERR_ABORTED error which can happen
-                if "net::ERR_ABORTED" not in str(e):
-                    raise e
-                if debug:
-                    rprint(f"[magenta]Ignoring expected error: {e}[/magenta]")
-
-            # Wait for the on_request handler to capture the token, polling instead of static wait
-            wait_seconds = 30 if debug else 10
-            if debug:
-                rprint(f"[magenta]Waiting for token capture for up to {wait_seconds}s...[/magenta]")
-
-            end_time = time.time() + wait_seconds
-            while time.time() < end_time:
-                if token_url:
-                    if debug:
-                        rprint("[magenta]Token found, proceeding immediately.[/magenta]")
-                    break
-                page.wait_for_timeout(100)  # poll every 100ms
 
             if debug and not token_url:
-                rprint("[bold red]DEBUG: Timed out waiting for token.[/bold red]")
-                rprint("[bold red]Dumping page content:[/bold red]")
+                rprint("[bold red]DEBUG: Timed out waiting for token. Dumping page content:[/bold red]")
                 try:
                     rprint(page.content())
                 except Exception as e:
                     rprint(f"[bold red]Could not get page content: {e}[/bold red]")
-
-            # Save the session state for the next run
-            context.storage_state(path=storage_state_path)
-            if debug:
-                rprint(f"[magenta]Browser state saved to {storage_state_path}[/magenta]")
 
             browser.close()
 

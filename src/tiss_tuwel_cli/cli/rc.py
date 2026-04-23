@@ -42,15 +42,24 @@ def get_summary_line(client=None) -> str:
     if not token:
         return "[dim]Not logged in. Run:[/dim] tiss-tuwel-cli login"
 
-    # Get or create client
+    # Get or create client (with refresh callback to handle token expiry)
     if client is None:
         from tiss_tuwel_cli.clients.tuwel import TuwelClient
-        try:
-            client = TuwelClient(token)
-            # Quick validation
-            client.get_site_info()
-        except Exception:
-            return "[dim]Session expired. Run:[/dim] tiss-tuwel-cli login"
+        from tiss_tuwel_cli.config import ConfigManager as _CM
+        _cfg = _CM()
+
+        def _refresh():
+            user, passw = _cfg.get_login_credentials()
+            if not user:
+                raise Exception("No credentials stored.")
+            from tiss_tuwel_cli.cli.auth import _run_playwright_login_internal
+            if _run_playwright_login_internal(user, passw, False):
+                new = _cfg.get_tuwel_token()
+                if new:
+                    return new
+            raise Exception("Token refresh failed.")
+
+        client = TuwelClient(token, token_refresh_callback=_refresh)
 
     parts = []
 

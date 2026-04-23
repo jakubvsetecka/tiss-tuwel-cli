@@ -104,11 +104,13 @@ class TuwelClient:
                 error_msg = data.get('message', '')
                 error_code = data.get('errorcode', '')
 
-                # Check for invalid token errors
+                # Refresh on token-invalid/expired errors.
+                # accessexception fires when the token has expired (60s lifetime on TUWEL).
+                # invalidtoken fires when the token record no longer exists.
+                # If it was a real permission error (not expiry), the retry will raise the same error.
                 if _retry and self.token_refresh_callback and (
-                        "Invalid token" in error_msg or
-                        "token" in error_msg.lower() or  # Broad check, relying on specific error codes usually
                         error_code == "invalidtoken" or
+                        error_code == "invalidsession" or
                         error_code == "accessexception"
                 ):
                     # Attempt to refresh token
