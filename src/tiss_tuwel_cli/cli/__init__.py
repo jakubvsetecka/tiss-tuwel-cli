@@ -79,8 +79,8 @@ def get_tuwel_client(force_new_token: bool = False, silent: bool = False) -> Tuw
         if not silent:
             rprint("[yellow]No valid token found. Attempting automatic re-login...[/yellow]")
 
-        from tiss_tuwel_cli.cli.auth import _run_playwright_login_internal
-        return _run_playwright_login_internal(user, passw, False)
+        from tiss_tuwel_cli.cli.auth import _get_env_otp_code, _run_playwright_login_internal
+        return _run_playwright_login_internal(user, passw, False, otp_code_provider=_get_env_otp_code)
 
     token = config.get_tuwel_token()
 

@@ -6,8 +6,11 @@ TUWEL authentication tokens and user IDs.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Dict, Optional
+
+from dotenv import find_dotenv, load_dotenv
 
 # Default configuration directory and file paths
 CONFIG_DIR = Path.home() / ".tu_companion"
@@ -40,7 +43,15 @@ class ConfigManager:
         """
         self.config_dir = config_dir or CONFIG_DIR
         self.config_file = config_file or CONFIG_FILE
+        self._load_environment()
         self._ensure_config_exists()
+
+    @staticmethod
+    def _load_environment() -> None:
+        """Load environment variables from the nearest .env file when available."""
+        dotenv_path = find_dotenv(usecwd=True)
+        if dotenv_path:
+            load_dotenv(dotenv_path=dotenv_path, override=False)
 
     def _ensure_config_exists(self) -> None:
         """Create configuration directory and file if they don't exist."""
@@ -122,7 +133,15 @@ class ConfigManager:
             A tuple containing (username, password), or (None, None) if not set.
         """
         config = self._load_config()
-        return config.get("tuwel_user"), config.get("tuwel_pass")
+        user = config.get("tuwel_user") or os.getenv("TUWEL_USERNAME")
+        passw = config.get("tuwel_pass") or os.getenv("TUWEL_PASSWORD")
+
+        if isinstance(user, str):
+            user = user.strip()
+        if isinstance(passw, str):
+            passw = passw.strip()
+
+        return user or None, passw or None
 
     def set_login_credentials(self, user: str, passw: str) -> None:
         """

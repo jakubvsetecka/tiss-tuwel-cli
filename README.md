@@ -39,6 +39,14 @@ Headless browser automation. Credentials can be saved for future logins.
 uv run tiss-tuwel-cli login
 ```
 
+If MFA is enabled, you can pass a one-time code directly:
+
+```bash
+uv run tiss-tuwel-cli login --otp-code 123456
+```
+
+When `--otp-code` is provided, the CLI skips session fast-path reuse and runs full SSO immediately.
+
 ### Hybrid 🌐
 Opens visible browser for manual login. Token captured automatically.
 
@@ -51,6 +59,24 @@ Generate the `moodlemobile://` token URL yourself and paste it.
 
 ```bash
 uv run tiss-tuwel-cli login --manual
+```
+
+### Environment Variables
+
+You can provide TUWEL credentials via environment variables (or a `.env` file):
+
+```bash
+TUWEL_USERNAME="your-username"
+TUWEL_PASSWORD="your-password"
+```
+
+The CLI will use these values automatically if credentials are not saved in `~/.tu_companion/config.json`.
+
+If TU Wien SSO prompts for a 6-digit authenticator code, the CLI will prompt for it interactively.
+For non-interactive runs, you can provide one code via:
+
+```bash
+TUWEL_OTP_CODE="123456"
 ```
 
 ## Usage

@@ -33,6 +33,7 @@ dependencies = [
     "InquirerPy>=0.3.4",
     "prompt_toolkit>=3.0.0",
     "playwright>=1.30.0",
+    "python-dotenv>=1.0.1",
 ]
 
 [project.optional-dependencies]
