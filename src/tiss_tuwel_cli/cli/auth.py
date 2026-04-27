@@ -337,6 +337,7 @@ def login(
         hybrid: bool = typer.Option(False, "--hybrid", help="Open browser for manual login, auto-capture token."),
     debug: bool = typer.Option(False, "--debug", help="Enable debug mode with non-headless browser and verbose logs."),
     otp_code: Optional[str] = typer.Option(None, "--otp-code", help="Optional 6-digit TUWEL Authenticator code for MFA."),
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="Only try the browser session fast-path; exit immediately (code 1) if the session is expired instead of prompting for credentials or OTP."),
 ):
     """
     [Automated] Launches a browser to log in and captures the TUWEL token automatically.
@@ -376,6 +377,17 @@ def login(
         code = Prompt.ask("Enter 6-digit TUWEL Authenticator code", password=True)
         cached_prompt_otp = _normalize_otp_code(code)
         return cached_prompt_otp
+
+    if non_interactive:
+        success = _run_playwright_login_internal(
+            user or "", passw or "", debug, fast_path_only=True
+        )
+        if success:
+            rprint("[bold green]Session reused successfully.[/bold green]")
+        else:
+            rprint("[bold red]No active session.[/bold red]")
+            raise typer.Exit(code=1)
+        return
 
     if not all([user, passw]):
         rprint("[cyan]No stored credentials found.[/cyan]")
@@ -485,13 +497,15 @@ def _run_playwright_login_internal(
     debug: bool,
     otp_code_provider: Optional[Callable[[], Optional[str]]] = None,
     force_full_sso: bool = False,
+    fast_path_only: bool = False,
 ) -> bool:
     """
     Internal helper to run Playwright login. Returns True on success, False on failure.
 
     Uses a saved browser session fast-path when available to avoid unnecessary
     MFA prompts. If force_full_sso=True, skips session reuse and runs full SSO
-    immediately.
+    immediately. If fast_path_only=True, returns False immediately when the
+    session is expired instead of attempting interactive SSO.
     """
     storage_state_path = config.config_dir / "browser_state.json"
 
@@ -522,12 +536,14 @@ def _run_playwright_login_internal(
                 token_url = _try_get_token(fast_page, debug)
                 if debug:
                     rprint(f"[magenta]Fast path result: {'success' if token_url else 'no valid session, falling back'}[/magenta]")
-                if token_url:
-                    fast_context.close()
-                else:
-                    fast_context.close()
+                fast_context.close()
             elif force_full_sso and debug:
                 rprint("[magenta]OTP code provided: skipping session fast path and running full SSO.[/magenta]")
+
+            # --- Fast-path-only mode: don't attempt interactive SSO ---
+            if not token_url and fast_path_only:
+                browser.close()
+                return False
 
             # --- Slow path: full SSO login ---
             if not token_url:
@@ -595,6 +611,22 @@ def _run_playwright_login_internal(
         return True
     else:
         return False
+
+
+def logout():
+    """Clear the saved TUWEL token and browser session, forcing a fresh login next time."""
+    cleared = []
+
+    config.clear_token()
+    cleared.append("token")
+
+    browser_state = config.config_dir / "browser_state.json"
+    if browser_state.exists():
+        browser_state.unlink()
+        cleared.append("browser session")
+
+    rprint(f"[green]Logged out.[/green] Cleared: {', '.join(cleared)}.")
+    rprint("Run [cyan]tiss-tuwel-cli login[/cyan] to authenticate again.")
 
 
 def manual_login():
